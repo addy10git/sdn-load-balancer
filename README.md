@@ -7,8 +7,6 @@ congested or failed links, health-checks and auto-scales servers, blocks DDoS
 sources at the edge, predicts link congestion 10 s ahead, and shows all of it
 on a live web dashboard.
 
-```mermaid
-flowchart LR
     B[Browser dashboard] <-- Socket.IO --> D[Flask dashboard :5000]
     D -- REST --> C[Ryu controller<br/>:6653 OpenFlow · :8080 REST]
     D -- control API --> M[Mininet :8001]
