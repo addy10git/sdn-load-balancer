@@ -1,0 +1,33 @@
+# Python 3.8 (or 3.9) virtual environment: controller, AI, dashboard, experiments.
+# Install with ./setup.sh, which first pins setuptools so Ryu can build:
+#   pip install setuptools==57.5.0 wheel
+#   pip install --no-build-isolation -r requirements.txt
+#
+# Mininet itself is installed system-wide (apt) and runs under sudo python3.
+
+# --- SDN controller -------------------------------------------------------
+ryu==4.34
+eventlet==0.30.2          # newer eventlet removed ALREADY_HANDLED, which Ryu's WSGI uses
+dnspython==1.16.0         # eventlet 0.30.x requires dnspython < 2
+greenlet==1.1.3
+networkx==3.1             # last release that supports Python 3.8
+
+# --- AI congestion predictor ----------------------------------------------
+numpy==1.24.4
+pandas==2.0.3
+scikit-learn==1.3.2
+joblib==1.3.2
+
+# --- Dashboard ------------------------------------------------------------
+# Runs with async_mode="threading", so it does not depend on eventlet.
+Flask==2.3.3
+Werkzeug==2.3.8
+Flask-SocketIO==5.3.6
+python-socketio==5.10.0
+python-engineio==4.8.0
+simple-websocket==1.0.0
+requests==2.31.0
+
+# --- Experiments and tests ------------------------------------------------
+matplotlib==3.7.5
+pytest==7.4.4

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDN Load Balancer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <!-- Libraries load from the CDN; if that fails (offline VM, blocked CDN) the
+       copies bundled in static/vendor are used instead. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <script>window.io || document.write('<script src="{{ url_for('static', filename='vendor/socket.io.min.js') }}"><\/script>')</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <script>window.d3 || document.write('<script src="{{ url_for('static', filename='vendor/d3.min.js') }}"><\/script>')</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script>window.Chart || document.write('<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"><\/script>')</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Intelligent SDN Load Balancer</h1>
+    <span class="subtitle">VIP 10.0.0.100 &middot; OpenFlow 1.3</span>
+  </div>
+  <div class="conn">
+    <span id="pill-controller" class="pill pill-bad"><i></i>Controller: connecting&hellip;</span>
+    <span id="pill-mininet" class="pill pill-bad"><i></i>Mininet: connecting&hellip;</span>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden">Controller disconnected &mdash; showing no live data until it is reachable again.</div>
+
+<section class="summary" id="summary">
+  <div class="tile"><span class="label">Total throughput</span><span class="value" id="sum-throughput">&ndash;</span></div>
+  <div class="tile"><span class="label">Active flows</span><span class="value" id="sum-flows">&ndash;</span></div>
+  <div class="tile"><span class="label">Healthy servers</span><span class="value" id="sum-healthy">&ndash;</span></div>
+  <div class="tile"><span class="label">Strategy</span><span class="value small" id="sum-strategy">&ndash;</span></div>
+  <div class="tile"><span class="label">Attacks blocked</span><span class="value" id="sum-attacks">&ndash;</span></div>
+  <div class="tile"><span class="label">Last recovery</span><span class="value" id="sum-recovery">&ndash;</span></div>
+  <div class="tile"><span class="label">Predictor</span><span class="value small" id="sum-model">&ndash;</span></div>
+</section>
+
+<main class="grid">
+  <section class="panel topo-panel">
+    <div class="panel-head">
+      <h2>Live topology</h2>
+      <div class="legend">
+        <span><b class="sw sw-good"></b>&lt;50%</span>
+        <span><b class="sw sw-warn"></b>50&ndash;80%</span>
+        <span><b class="sw sw-crit"></b>&gt;80%</span>
+        <span><b class="sw sw-pred"></b>predicted &gt;80%</span>
+        <span><b class="sw sw-down"></b>down</span>
+      </div>
+    </div>
+    <div id="topology" class="topology"><div class="empty" id="topo-empty">Waiting for topology&hellip;</div></div>
+    <div id="tooltip" class="tooltip hidden"></div>
+  </section>
+
+  <section class="panel controls">
+    <h2>Controls</h2>
+    <div class="ctl">
+      <label for="strategy">Load-balancing strategy</label>
+      <div class="row">
+        <select id="strategy">{% for s in strategies %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+        <button data-action="strategy">Apply</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="link-select">Switch link</label>
+      <div class="row">
+        <select id="link-select">{% for l in switch_links %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select>
+        <button data-action="link-down" class="danger">Down</button>
+        <button data-action="link-up">Up</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="server-select">Server</label>
+      <div class="row">
+        <select id="server-select">{% for s in servers %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+        <button data-action="server-stop" class="danger">Kill</button>
+        <button data-action="server-start">Restore</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="traffic-src">Traffic burst (iperf to VIP)</label>
+      <div class="row">
+        <select id="traffic-src">{% for c in clients %}<option value="{{ c }}">{{ c }}</option>{% endfor %}<option value="all">all clients</option></select>
+        <select id="traffic-mode"><option value="tcp">TCP x4</option><option value="udp">UDP 8M</option></select>
+        <input id="traffic-duration" type="number" min="5" max="300" value="30" aria-label="duration seconds">
+        <button data-action="traffic">Start</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="attack-src">Simulated DDoS (hping3 to VIP)</label>
+      <div class="row">
+        <select id="attack-src">{% for c in clients %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select>
+        <select id="attack-type"><option value="syn">SYN flood</option><option value="udp">UDP flood</option><option value="icmp">ICMP flood</option></select>
+        <input id="attack-duration" type="number" min="5" max="120" value="20" aria-label="duration seconds">
+        <button data-action="attack" class="danger">Launch</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label for="unblock-ip">Unblock IP</label>
+      <div class="row">
+        <input id="unblock-ip" type="text" placeholder="10.0.0.4">
+        <button data-action="unblock">Unblock</button>
+        <button data-action="stop-traffic">Stop all traffic</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>Export history (SQLite &rarr; CSV)</label>
+      <div class="row wrap">
+        {% for t in tables %}<a class="btn-link" href="/export/{{ t }}.csv">{{ t }}</a>{% endfor %}
+      </div>
+    </div>
+    <div id="action-result" class="action-result" role="status"></div>
+    <div class="jobs"><h3>Running traffic jobs</h3><ul id="jobs"><li class="muted">none</li></ul></div>
+  </section>
+
+  <section class="panel servers-panel">
+    <div class="panel-head"><h2>Servers</h2><span class="muted" id="pool-info"></span></div>
+    <div id="servers" class="servers"></div>
+  </section>
+
+  <section class="panel chart-panel">
+    <div class="panel-head"><h2>Throughput (Mbps)</h2></div>
+    <div class="chart-box"><canvas id="chart-throughput" aria-label="Throughput over time"></canvas></div>
+  </section>
+
+  <section class="panel chart-panel">
+    <div class="panel-head">
+      <h2>Link utilisation (%)</h2>
+      <details class="link-pick"><summary>Links (max 4)</summary><div id="util-links"></div></details>
+    </div>
+    <div class="chart-box"><canvas id="chart-util" aria-label="Link utilisation over time"></canvas></div>
+  </section>
+
+  <section class="panel chart-panel">
+    <div class="panel-head">
+      <h2>Predicted vs actual</h2>
+      <select id="pred-link" aria-label="link for prediction chart"></select>
+    </div>
+    <div class="chart-box"><canvas id="chart-pred" aria-label="Predicted versus actual utilisation"></canvas></div>
+    <p class="muted small" id="pred-note"></p>
+  </section>
+
+  <section class="panel events-panel">
+    <div class="panel-head"><h2>Event log</h2><span class="muted small">newest first</span></div>
+    <ul id="events" class="events"></ul>
+  </section>
+
+  <section class="panel security-panel">
+    <h2>Security</h2>
+    <div id="blocked"></div>
+    <h3>Per-source rates</h3>
+    <table class="tbl"><thead><tr><th>Source</th><th>pps</th><th>new flows/s</th><th>SYN</th><th>ACK</th></tr></thead>
+      <tbody id="sources"><tr><td colspan="5" class="muted">no data</td></tr></tbody></table>
+  </section>
+</main>
+
+<script>window.SDN_CONFIG = {pushInterval: {{ push_interval }}};</script>
+<script src="{{ url_for('static', filename='js/topology.js') }}"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
